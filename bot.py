@@ -9,32 +9,33 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Themed Mail Bot is running 24/7!"
+    return "ROBINxMAIL TASK Bot is running 24/7!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 # --- 2. BOT CONFIGURATION ---
-API_TOKEN = '8688748786:AAGK1QI_5vFdiDmR8V-uPRKmCZeTvQ5wwjU'  # 👈 यहाँ अपना असली Bot Token डालें
-ADMIN_ID = 6535711381              # 👈 यहाँ अपनी असली Telegram ID डालें
+API_TOKEN = '8688748786:AAGK1QI_5vFdiDmR8V-uPRKmCZeTvQ5wwjU'  # 👈 Put your real Bot Token here
+ADMIN_ID = 6535711381              # 👈 Put your real Telegram Admin ID here
 
 bot = telebot.TeleBot(API_TOKEN)
 
 # In-memory database
 user_data = {}
 
+# Hardcoded default active task so it never shows "No Task Available" after a server restart
 active_tasks = {
-    "mail_1": {
+    "mail_default": {
         "title": "Gmail Creation Assignment",
         "reward": 10,
         "link": "https://accounts.google.com/signup",
-        "instructions": "Create a fresh Gmail account. Take a clear screenshot of the final dashboard showing the new email ID."
+        "instructions": "Create a fresh Gmail account. Take a clear screenshot of the final dashboard showing the new email ID and send it here."
     }
 }
 
-MIN_WITHDRAWAL = 30  
 admin_creating_task = {}
+MIN_WITHDRAWAL = 30  
 
 # --- THEMED BOTTOM KEYBOARD ---
 def get_main_keyboard():
@@ -60,13 +61,13 @@ def start_command(message):
         user_data[user_id]["username"] = f"@{username}" if username else None
         user_data[user_id]["first_name"] = first_name
     
-    welcome_text = "Welcome to Shorya Mail Task Bot! Select an option below to begin."
+    welcome_text = "Welcome to ROBINxMAIL TASK Bot! Select an option below to begin."
     if user_id == ADMIN_ID:
         welcome_text += (
             "\n\n🛠 **Admin Controls Active:**\n"
-            "• `/ROBINmailTaskadd` - नया टास्क ऐड करें 🌟\n"
-            "• `/setbalance @username [amount]` - यूजरनेम से पैसे ऐड करें\n"
-            "• `/setbalance [userid] [amount]` - यूजर आईडी से पैसे ऐड करें"
+            "• `/ROBINmailTaskadd` - Add New Task 🌟\n"
+            "• `/setbalance @username [amount]` - Set Balance by Username\n"
+            "• `/setbalance [userid] [amount]` - Set Balance by User ID"
         )
         
     bot.send_message(user_id, welcome_text, reply_markup=get_main_keyboard())
@@ -135,6 +136,7 @@ def process_link(message):
 def process_finish(message):
     instructions = message.text
     t_info = admin_creating_task[ADMIN_ID]
+    
     active_tasks[t_info["id"]] = {
         "title": t_info['title'],
         "reward": t_info['reward'],
@@ -168,11 +170,20 @@ def menu_controller(message):
             bot.send_message(user_id, "❌ **NO TASKS AVAILABLE** ❌", parse_mode="Markdown")
             return
         
-        inline_markup = types.InlineKeyboardMarkup()
-        for t_id, t_info in active_tasks.items():
-            btn = types.InlineKeyboardButton(f"✉️ {t_info['title']} (₹{t_info['reward']})", callback_data=f"job_{t_id}")
-            inline_markup.add(btn)
-        bot.send_message(user_id, "📋 **Available Email Jobs:**", reply_markup=inline_markup, parse_mode="Markdown")
+        # Instantly delivers the absolute newest task available in memory
+        latest_task_id = list(active_tasks.keys())[-1]
+        t_info = active_tasks[latest_task_id]
+        
+        user_data[user_id]["active_task_id"] = latest_task_id
+        
+        job_card = (
+            f"✉️ **JOB FILE: {t_info['title']}**\n\n"
+            f"💰 **Reward:** ₹{t_info['reward']}\n"
+            f"🔗 **Link:** {t_info['link']}\n\n"
+            f"📋 **Instructions:**\n{t_info['instructions']}\n\n"
+            "⚠️ Send your screenshot completion proof directly to this chat window now."
+        )
+        bot.send_message(user_id, job_card, parse_mode="Markdown", disable_web_page_preview=True)
 
     elif message.text == '💸 Withdraw':
         bal = user_data[user_id]["balance"]
@@ -189,24 +200,7 @@ def handle_callbacks(call):
     data_parts = call.data.split("_")
     action = data_parts[0]
 
-    if action == "job":
-        task_id = data_parts[1]
-        if task_id not in active_tasks:
-            bot.answer_callback_query(call.id, "❌ Task Expired.")
-            return
-            
-        user_data[user_id]["active_task_id"] = task_id
-        t_info = active_tasks[task_id]
-        
-        job_card = (
-            f"✉️ **JOB FILE: {t_info['title']}**\n\n"
-            f"🔗 **Link:** {t_info['link']}\n\n"
-            f"📋 **Instructions:**\n{t_info['instructions']}\n\n"
-            "⚠️ Completion proof के लिए स्क्रीनशॉट सीधे यहाँ सेंड करें।"
-        )
-        bot.edit_message_text(job_card, chat_id=user_id, message_id=call.message.message_id, parse_mode="Markdown", disable_web_page_preview=True)
-
-    elif action == "verifymail":
+    if action == "verifymail":
         target = int(data_parts[1])
         payout = int(data_parts[2])
         if target in user_data:
@@ -237,10 +231,15 @@ def handle_callbacks(call):
 def audit_incoming_proof(message):
     user_id = message.chat.id
     if user_id not in user_data or not user_data[user_id]["active_task_id"]:
-        bot.send_message(user_id, "❌ Click '✉️ Tasks' and select a job before sending proof.")
+        bot.send_message(user_id, "❌ Click '✉️ Tasks' to view your job before sending proof.")
         return
 
     task_id = user_data[user_id]["active_task_id"]
+    if task_id not in active_tasks:
+        bot.send_message(user_id, "❌ This task is no longer available.")
+        user_data[user_id]["active_task_id"] = None
+        return
+        
     t_info = active_tasks[task_id]
     reward_amt = t_info["reward"]
     
@@ -265,7 +264,7 @@ def audit_incoming_proof(message):
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🏷 **Task:** {t_info['title']}\n"
         f"💰 **Reward Amount:** ₹{reward_amt}\n\n"
-        "👇 Approve करने के लिए नीचे बटन दबाएं, पेमेंट अपने आप ऐड हो जायेगा।"
+        "👇 Press a button below to evaluate."
     )
     bot.send_photo(ADMIN_ID, photo_token, caption=admin_view_card, parse_mode="Markdown", reply_markup=admin_markup)
 
@@ -302,5 +301,5 @@ if __name__ == "__main__":
     web_engine.daemon = True
     web_engine.start()
     
-    print("Clean Bot is running successfully...")
+    print("ROBINxMAIL TASK Bot is spinning cleanly...")
     bot.infinity_polling()
