@@ -29,7 +29,7 @@ SINGLE_TASK_REWARD = 10.0
 BULK_TASK_REWARD = 15.0
 
 # ⚙️ GMAIL TASK SWITCH (True = Open, False = Force "No Task Available")
-GMAIL_TASKS_ACTIVE = False  # 👈 Change this to True when you want to start giving tasks!
+GMAIL_TASKS_ACTIVE = True  # 👈 Change this to True when you want to start giving tasks!
 
 # 📋 DYNAMIC GMAIL WORK POOL (1-by-1 Distribution Queue)
 GMAIL_TASK_POOL = [
