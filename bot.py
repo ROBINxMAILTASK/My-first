@@ -35,7 +35,10 @@ SPECIFIC_TASK_INSTRUCTIONS = (
     "showing the created email ID and submit it directly here."
 )
 
-REQUIRED_CHANNELS = ["@ROBINGMAILWORK", ""]
+# --- 4. DYNAMIC FORCE JOIN CHANNELS CONFIGURATION ---
+# Default channels list (your channel)
+REQUIRED_CHANNELS = ["@ROBINGMAILWORK"]
+
 # In-memory database for tracking balances
 user_data = {}
 MIN_WITHDRAWAL = 30  
@@ -47,40 +50,50 @@ def get_main_keyboard():
     markup.row(types.KeyboardButton('💸 Withdraw'))
     return markup
 
-# --- UTILITY: CHECK MEMBERSHIP STATUS ---
+# --- UTILITY: CHECK MEMBERSHIP STATUS (CRASH-PROOF) ---
 def is_user_subscribed(user_id):
-    """
-    Checks if the user is a member of all channels in REQUIRED_CHANNELS.
-    Note: The bot MUST be an Admin in your channels for this check to work properly.
-    """
     if user_id == ADMIN_ID:
-        return True  # Bypass subscription check for the Admin
+        return True  # Admin bypass
         
     for channel in REQUIRED_CHANNELS:
         clean_channel = channel.strip()
         if not clean_channel:
             continue
+            
+        # If it's a web link, skip the API check to prevent crashes
+        if "t.me/" in clean_channel or "telegram.me" in clean_channel or clean_channel.startswith("http"):
+            continue
+            
         try:
             member = bot.get_chat_member(clean_channel, user_id)
             if member.status in ['left', 'kicked']:
                 return False
-        except Exception:
-            # If bot isn't admin yet or channel is invalid, we fallback to False to be safe
-            return False
+        except Exception as e:
+            # If bot is not admin or channel username is wrong, skip so it doesn't freeze
+            print(f"Subscription check bypassed/failed for {clean_channel}: {e}")
+            continue
+            
     return True
 
 # --- UTILITY: SEND FORCE JOIN INTERFACE ---
 def send_force_join_menu(chat_id, text_prefix="🚨 Join our Telegram Channels first to use this bot!"):
     markup = types.InlineKeyboardMarkup()
     
-    # Dynamically generate join buttons for each channel in configuration
     for channel in REQUIRED_CHANNELS:
-        username_clean = channel.replace("@", "").strip()
-        btn_label = f"Join {channel}"
-        btn_url = f"https://t.me/{username_clean}"
+        clean_ch = channel.strip()
+        if not clean_ch:
+            continue
+            
+        if "t.me/" in clean_ch or "telegram.me" in clean_ch or clean_ch.startswith("http"):
+            btn_url = clean_ch
+            btn_label = "Join Private Channel 🚀"
+        else:
+            username_clean = clean_ch.replace("@", "").strip()
+            btn_url = f"https://t.me/{username_clean}"
+            btn_label = f"Join {clean_ch} 📢"
+            
         markup.add(types.InlineKeyboardButton(btn_label, url=btn_url))
         
-    # Add confirmation check verification button
     markup.add(types.InlineKeyboardButton("✅ I have joined", callback_data="verify_channel_joins"))
     bot.send_message(chat_id, text_prefix, reply_markup=markup)
 
@@ -91,7 +104,6 @@ def start_command(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     
-    # Save user info
     if user_id not in user_data:
         user_data[user_id] = {
             "balance": 0, 
@@ -103,7 +115,6 @@ def start_command(message):
         user_data[user_id]["username"] = f"@{username}" if username else None
         user_data[user_id]["first_name"] = first_name
 
-    # Check Force Join Membership
     if not is_user_subscribed(user_id):
         send_force_join_menu(user_id)
         return
@@ -112,7 +123,7 @@ def start_command(message):
     if user_id == ADMIN_ID:
         welcome_text += (
             "\n\n🛠 **Admin Controls Active:**\n"
-            "• `/setchannels @chan1 @chan2` - Set Dynamic Join Channels\n"
+            "• `/setchannels @chan1 https://t.me/yourlink` - Set Join Channels/Links\n"
             "• `/setbalance @username [amount]` - Set Balance by Username\n"
             "• `/setbalance [userid] [amount]` - Set Balance by User ID"
         )
@@ -129,11 +140,15 @@ def update_bot_channels(message):
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            raise ValueError
+            REQUIRED_CHANNELS = []
+            bot.send_message(ADMIN_ID, "✅ **All force-join requirements cleared!** Users can access tasks directly now.")
+            return
             
         new_channels = []
         for p in parts[1:]:
-            if p.startswith("@"):
+            if "t.me/" in p or "telegram.me" in p or p.startswith("http"):
+                new_channels.append(p)
+            elif p.startswith("@"):
                 new_channels.append(p)
             else:
                 new_channels.append(f"@{p}")
@@ -141,9 +156,9 @@ def update_bot_channels(message):
         REQUIRED_CHANNELS = new_channels
         bot.send_message(ADMIN_ID, f"✅ **Channels updated successfully!**\nUsers must now join:\n" + "\n".join(REQUIRED_CHANNELS))
     except Exception:
-        bot.send_message(ADMIN_ID, "❌ **Usage:** `/setchannels @chan1 @chan2 @chan3` (You can add as many as you want!)")
+        bot.send_message(ADMIN_ID, "❌ **Usage:** `/setchannels @chan1 https://t.me/+joinlink`")
 
-# --- ADMIN COMMAND: SET BALANCE VIA USERNAME OR USERID ---
+# --- ADMIN COMMAND: SET BALANCE ---
 @bot.message_handler(commands=['setbalance'])
 def set_user_balance(message):
     if message.chat.id != ADMIN_ID:
@@ -161,7 +176,7 @@ def set_user_balance(message):
                     target_uid = uid
                     break
             if not target_uid:
-                bot.send_message(ADMIN_ID, f"❌ User with username {target_input} not found in bot database yet. (He must type /start first)")
+                bot.send_message(ADMIN_ID, f"❌ User with username {target_input} not found in database yet.")
                 return
         else:
             target_uid = int(target_input)
@@ -173,7 +188,7 @@ def set_user_balance(message):
         bot.send_message(ADMIN_ID, f"✅ Successfully updated balance of {target_input} to **₹{amount}**.")
         bot.send_message(target_uid, f"💰 Admin updated your wallet balance! New balance: **₹{amount}**.")
     except Exception:
-        bot.send_message(ADMIN_ID, "❌ Format: `/setbalance @username 50` OR `/setbalance 123456789 50`")
+        bot.send_message(ADMIN_ID, "❌ Format: `/setbalance @username 50`")
 
 # --- USER REPLY MENU CONTROLLERS ---
 @bot.message_handler(func=lambda message: True)
@@ -182,11 +197,9 @@ def menu_controller(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     
-    # Initialize profile
     if user_id not in user_data:
         user_data[user_id] = {"balance": 0, "active_task_status": False, "username": f"@{username}" if username else None, "first_name": first_name}
 
-    # Intercept with Force Join check
     if not is_user_subscribed(user_id):
         send_force_join_menu(user_id)
         return
@@ -229,18 +242,33 @@ def handle_callbacks(call):
     data_parts = call.data.split("_")
     action = data_parts[0]
 
-    # Handle membership verification confirmation button click
     if action == "verify_channel_joins":
+        # ⚡ CRITICAL FIX: Answer the callback immediately to stop "not responding" message
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
         if is_user_subscribed(user_id):
-            bot.delete_message(chat_id=user_id, message_id=call.message.message_id)
-            bot.answer_callback_query(call.id, "🎉 Success! Bot unlocked.", show_alert=True)
-            
-            # Show Welcome UI
+            try:
+                bot.delete_message(chat_id=user_id, message_id=call.message.message_id)
+            except Exception:
+                pass
             welcome_text = "Welcome to ROBINxMAIL TASK Bot! Select an option below to begin."
             bot.send_message(user_id, welcome_text, reply_markup=get_main_keyboard())
         else:
-            bot.answer_callback_query(call.id, "❌ You haven't joined all required channels yet!", show_alert=True)
+            # Alert user on-screen that they still need to join
+            try:
+                bot.answer_callback_query(call.id, "❌ You haven't joined all required public channels yet!", show_alert=True)
+            except Exception:
+                bot.send_message(user_id, "❌ You haven't joined the required channel yet! Please join and click verification again.")
         return
+
+    # Immediately acknowledge other inline button events to prevent spinners
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
 
     if action == "verifymail":
         target = int(data_parts[1])
@@ -273,7 +301,6 @@ def handle_callbacks(call):
 def audit_incoming_proof(message):
     user_id = message.chat.id
     
-    # Intercept proof submissions if not joined
     if not is_user_subscribed(user_id):
         send_force_join_menu(user_id)
         return
@@ -314,7 +341,6 @@ def process_payout_request(message):
     wallet_bal = user_data[user_id]["balance"]
     username = user_data[user_id].get("username", "No Username")
     
-    # Intercept payout processing if not joined
     if not is_user_subscribed(user_id):
         send_force_join_menu(user_id)
         return
