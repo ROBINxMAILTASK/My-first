@@ -9,367 +9,470 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "ROBINxMAIL TASK Bot is running 24/7!"
+    return "TASK WORK Bot Engine is Live!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# --- 2. BOT CONFIGURATION ---
-API_TOKEN = '8688748786:AAGK1QI_5vFdiDmR8V-uPRKmCZeTvQ5wwjU'  # 👈 Put your real Bot Token here
-ADMIN_ID = 6535711381              # 👈 Put your real Telegram Admin ID here
+# --- 2. BOT BASE CONFIGURATION ---
+API_TOKEN = '8688748786:AAGK1QI_5vFdiDmR8V-uPRKmCZeTvQ5wwjU'  # 👈 Replace with your Telegram Bot Token
+ADMIN_ID = 6535711381              # 👈 Replace with your Telegram Account Admin ID
 
 bot = telebot.TeleBot(API_TOKEN)
 
-# --- 3. HARDCODED GOAL EMAIL CONFIGURATIONS ---
+# --- 3. CONFIGURATIONS & REWARDS ---
+REQUIRED_CHANNELS = ["@ROBINGMAILWORK"]
+MIN_WITHDRAWAL = 20
+
+SINGLE_TASK_REWARD = 10.0
+BULK_TASK_REWARD = 15.0
+
+# ⚙️ GMAIL TASK SWITCH (True = Open, False = Force "No Task Available")
+GMAIL_TASKS_ACTIVE = False  # 👈 Change this to True when you want to start giving tasks!
+
+# 📋 DYNAMIC GMAIL WORK POOL (1-by-1 Distribution Queue)
+GMAIL_TASK_POOL = [
+    {
+        "id": "task_001",
+        "email": "fabricoespeche135@gmail.com",
+        "pass": "ROBINXMAIL#112233",
+        "assigned_to": None,
+        "completed": False
+    },
+    {
+        "id": "task_002",
+        "email": "anotherworker99@gmail.com",
+        "pass": "ROBINXMAIL#556677",
+        "assigned_to": None,
+        "completed": False
+    }
+]
+
 SPECIFIC_TASK_TITLE = "Gmail Creation Assignment"
-SPECIFIC_TASK_REWARD = 10
 SPECIFIC_TASK_LINK = "https://accounts.google.com/signup"
-SPECIFIC_TASK_DETAILS = (
-    "Details - fabricoespeche135@gmail.com\n"
-    "Pass- ROBINXMAIL#112233"
-)
 SPECIFIC_TASK_INSTRUCTIONS = (
     "Create a fresh Gmail account using the exact structural details shown above. "
     "Once done, take a clear screenshot of your finalized Google account dashboard "
     "showing the created email ID and submit it directly here."
 )
 
-# --- 4. DYNAMIC FORCE JOIN CHANNELS CONFIGURATION ---
-# Default channels list (your channel)
-REQUIRED_CHANNELS = ["@ROBINGMAILWORK"]
+# --- 4. PERSISTENT IN-MEMORY STORAGE ---
+user_db = {}
 
-# In-memory database for tracking balances
-user_data = {}
-MIN_WITHDRAWAL = 30  
-
-# --- THEMED BOTTOM KEYBOARD ---
+# --- 5. INTERFACE GENERATORS ---
 def get_main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    markup.row(types.KeyboardButton('🧑‍💻 Account'), types.KeyboardButton('✉️ Tasks'))
-    markup.row(types.KeyboardButton('💸 Withdraw'))
+    markup.row(types.KeyboardButton('📥 Get Review Task'), types.KeyboardButton('📥 Get Gmail Task'))
+    markup.row(types.KeyboardButton('💳 Wallet'), types.KeyboardButton('👥 Invite & Earn'))
+    markup.row(types.KeyboardButton('💸 Withdraw'), types.KeyboardButton('ℹ️ Help & Tutorial'))
+    markup.row(types.KeyboardButton('🏆 Leaderboard'))
     return markup
 
-# --- UTILITY: CHECK MEMBERSHIP STATUS (CRASH-PROOF) ---
+# --- UTILITY: MEMBER FORCE JOIN ---
 def is_user_subscribed(user_id):
     if user_id == ADMIN_ID:
-        return True  # Admin bypass
-        
+        return True
     for channel in REQUIRED_CHANNELS:
         clean_channel = channel.strip()
-        if not clean_channel:
+        if not clean_channel or "t.me" in clean_channel or clean_channel.startswith("http"):
             continue
-            
-        # If it's a web link, skip the API check to prevent crashes
-        if "t.me/" in clean_channel or "telegram.me" in clean_channel or clean_channel.startswith("http"):
-            continue
-            
         try:
             member = bot.get_chat_member(clean_channel, user_id)
             if member.status in ['left', 'kicked']:
                 return False
-        except Exception as e:
-            # If bot is not admin or channel username is wrong, skip so it doesn't freeze
-            print(f"Subscription check bypassed/failed for {clean_channel}: {e}")
+        except Exception:
             continue
-            
     return True
 
-# --- UTILITY: SEND FORCE JOIN INTERFACE ---
-def send_force_join_menu(chat_id, text_prefix="🚨 Join our Telegram Channels first to use this bot!"):
+def send_force_join_menu(chat_id):
     markup = types.InlineKeyboardMarkup()
-    
     for channel in REQUIRED_CHANNELS:
         clean_ch = channel.strip()
-        if not clean_ch:
-            continue
-            
-        if "t.me/" in clean_ch or "telegram.me" in clean_ch or clean_ch.startswith("http"):
-            btn_url = clean_ch
-            btn_label = "Join Private Channel 🚀"
+        if "t.me" in clean_ch or clean_ch.startswith("http"):
+            url = clean_ch
         else:
-            username_clean = clean_ch.replace("@", "").strip()
-            btn_url = f"https://t.me/{username_clean}"
-            btn_label = f"Join {clean_ch} 📢"
-            
-        markup.add(types.InlineKeyboardButton(btn_label, url=btn_url))
-        
+            url = f"https://t.me/{clean_ch.replace('@', '')}"
+        markup.add(types.InlineKeyboardButton(f"Join {clean_ch} 📢", url=url))
     markup.add(types.InlineKeyboardButton("✅ I have joined", callback_data="verify_channel_joins"))
-    bot.send_message(chat_id, text_prefix, reply_markup=markup)
+    bot.send_message(chat_id, "🚨 Join our Telegram Channels first to use this bot!", reply_markup=markup)
 
-# --- COMMAND: START ---
-@bot.message_handler(commands=['start'])
-def start_command(message):
-    user_id = message.chat.id
-    username = message.from_user.username
-    first_name = message.from_user.first_name
-    
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "balance": 0, 
-            "active_task_status": False, 
-            "username": f"@{username}" if username else None,
-            "first_name": first_name
+def initialize_user(user_id, username=None, first_name="Worker", referrer_id=None):
+    if user_id not in user_db:
+        user_db[user_id] = {
+            "balance": 0.0,
+            "pending": 0.0,
+            "gmail_count": 0,
+            "referrals": 0,
+            "active_task": None,        
+            "waiting_approval": False,  
+            "referrer_id": referrer_id,
+            "username": f"@{username}" if username else "No Username",
+            "first_name": first_name if first_name else "Worker"
         }
     else:
-        user_data[user_id]["username"] = f"@{username}" if username else None
-        user_data[user_id]["first_name"] = first_name
+        if username:
+            user_db[user_id]["username"] = f"@{username}"
+        if first_name:
+            user_db[user_id]["first_name"] = first_name
 
-    if not is_user_subscribed(user_id):
-        send_force_join_menu(user_id)
-        return
-    
-    welcome_text = "Welcome to ROBINxMAIL TASK Bot! Select an option below to begin."
-    if user_id == ADMIN_ID:
-        welcome_text += (
-            "\n\n🛠 **Admin Controls Active:**\n"
-            "• `/setchannels @chan1 https://t.me/yourlink` - Set Join Channels/Links\n"
-            "• `/setbalance @username [amount]` - Set Balance by Username\n"
-            "• `/setbalance [userid] [amount]` - Set Balance by User ID"
-        )
-        
-    bot.send_message(user_id, welcome_text, reply_markup=get_main_keyboard())
-
-# --- ADMIN COMMAND: DYNAMICALLY UPDATE REQUIRED CHANNELS ---
-@bot.message_handler(commands=['setchannels'])
-def update_bot_channels(message):
-    global REQUIRED_CHANNELS
-    if message.chat.id != ADMIN_ID:
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            REQUIRED_CHANNELS = []
-            bot.send_message(ADMIN_ID, "✅ **All force-join requirements cleared!** Users can access tasks directly now.")
-            return
-            
-        new_channels = []
-        for p in parts[1:]:
-            if "t.me/" in p or "telegram.me" in p or p.startswith("http"):
-                new_channels.append(p)
-            elif p.startswith("@"):
-                new_channels.append(p)
-            else:
-                new_channels.append(f"@{p}")
-                
-        REQUIRED_CHANNELS = new_channels
-        bot.send_message(ADMIN_ID, f"✅ **Channels updated successfully!**\nUsers must now join:\n" + "\n".join(REQUIRED_CHANNELS))
-    except Exception:
-        bot.send_message(ADMIN_ID, "❌ **Usage:** `/setchannels @chan1 https://t.me/+joinlink`")
-
-# --- ADMIN COMMAND: SET BALANCE ---
-@bot.message_handler(commands=['setbalance'])
-def set_user_balance(message):
-    if message.chat.id != ADMIN_ID:
-        return
-    try:
-        parts = message.text.split()
-        target_input = parts[1]  
-        amount = int(parts[2])
-        
-        target_uid = None
-        
-        if target_input.startswith('@'):
-            for uid, data in user_data.items():
-                if data.get("username") and data["username"].lower() == target_input.lower():
-                    target_uid = uid
-                    break
-            if not target_uid:
-                bot.send_message(ADMIN_ID, f"❌ User with username {target_input} not found in database yet.")
-                return
-        else:
-            target_uid = int(target_input)
-            
-        if target_uid not in user_data:
-            user_data[target_uid] = {"balance": 0, "active_task_status": False, "username": None, "first_name": "Worker"}
-            
-        user_data[target_uid]["balance"] = amount
-        bot.send_message(ADMIN_ID, f"✅ Successfully updated balance of {target_input} to **₹{amount}**.")
-        bot.send_message(target_uid, f"💰 Admin updated your wallet balance! New balance: **₹{amount}**.")
-    except Exception:
-        bot.send_message(ADMIN_ID, "❌ Format: `/setbalance @username 50`")
-
-# --- USER REPLY MENU CONTROLLERS ---
-@bot.message_handler(func=lambda message: True)
-def menu_controller(message):
+# --- 6. CORE BOT EVENT CONTROLLERS ---
+@bot.message_handler(commands=['start'])
+def handle_start(message):
     user_id = message.chat.id
-    username = message.from_user.username
-    first_name = message.from_user.first_name
+    parts = message.text.split()
     
-    if user_id not in user_data:
-        user_data[user_id] = {"balance": 0, "active_task_status": False, "username": f"@{username}" if username else None, "first_name": first_name}
+    referrer_id = None
+    if len(parts) > 1 and parts[1].isdigit():
+        potential_referrer = int(parts[1])
+        if potential_referrer != user_id:
+            referrer_id = potential_referrer
+
+    initialize_user(user_id, message.from_user.username, message.from_user.first_name, referrer_id)
+    
+    if not is_user_subscribed(user_id):
+        send_force_join_menu(user_id)
+        return
+        
+    bot.send_message(user_id, "✅ Thanks for joining! Now you can use this bot.", reply_markup=get_main_keyboard())
+
+@bot.message_handler(func=lambda m: True)
+def process_menu_inputs(message):
+    user_id = message.chat.id
+    initialize_user(user_id, message.from_user.username, message.from_user.first_name)
 
     if not is_user_subscribed(user_id):
         send_force_join_menu(user_id)
         return
 
-    if message.text == '🧑‍💻 Account':
-        bal = user_data[user_id]["balance"]
-        account_msg = (
-            "👑 **ACCOUNT INFO** ✅\n\n"
-            "🆔 **UID :** `{}`\n\n"
-            "💰 **BALANCE : {} ₹** ✅"
-        ).format(user_id, bal)
-        bot.send_message(user_id, account_msg, parse_mode="Markdown")
+    text = message.text
 
-    elif message.text == '✉️ Tasks':
-        user_data[user_id]["active_task_status"] = True
+    if text == '📥 Get Review Task':
+        bot.send_message(user_id, "📥 **Google Maps Review Work**\n\nℹ️ For now there is no review task available. When the admin adds work we will notify you.", parse_mode="Markdown")
+
+    elif text == '📥 Get Gmail Task':
+        if user_db[user_id]["waiting_approval"]:
+            bot.send_message(user_id, "⏳ **Verification Pending!**\nYou have already submitted proof for a task. Please wait until the Admin approves your work before requesting a new Gmail setup.")
+            return
+
+        if user_db[user_id]["active_task"]:
+            bot.send_message(user_id, "⚠️ **Active Task Running!**\nYou already have a pending assignment details card. Please submit the screenshot proof for your current task first.")
+            return
+
+        markup = types.InlineKeyboardMarkup()
+        markup.row(types.InlineKeyboardButton("Single Gmail Task", callback_data="task_select_single"))
+        markup.row(types.InlineKeyboardButton("Bulk Gmail Task", callback_data="task_select_bulk"))
         
-        job_card = (
-            f"✉️ **JOB FILE: {SPECIFIC_TASK_TITLE}**\n\n"
-            f"💰 **Reward:** ₹{SPECIFIC_TASK_REWARD}\n"
-            f"🔗 **Link:** {SPECIFIC_TASK_LINK}\n\n"
-            f"ℹ️ **Target Creation Setup:**\n"
-            f"`{SPECIFIC_TASK_DETAILS}`\n\n"
-            f"📋 **Instructions:**\n{SPECIFIC_TASK_INSTRUCTIONS}\n\n"
-            "⚠️ Send your screenshot completion proof directly to this chat window now."
+        task_menu = (
+            "**The Current Available Tasks**\n\n"
+            f"💰 Single Gmail Task: ₹{SINGLE_TASK_REWARD}\n"
+            f"💰 Bulk Gmail Task: ₹{BULK_TASK_REWARD} per task"
         )
-        bot.send_message(user_id, job_card, parse_mode="Markdown", disable_web_page_preview=True)
+        bot.send_message(user_id, task_menu, parse_mode="Markdown", reply_markup=markup)
 
-    elif message.text == '💸 Withdraw':
-        bal = user_data[user_id]["balance"]
-        if bal < MIN_WITHDRAWAL:
-            bot.send_message(user_id, f"❌ **MINIMUM WITHDRAWAL IS {MIN_WITHDRAWAL}** ❌", parse_mode="Markdown")
-        else:
-            msg = bot.send_message(user_id, f"✅ You have ₹{bal}. Enter your UPI ID for payout:")
-            bot.register_next_step_handler(msg, process_payout_request)
+    elif text == '💳 Wallet':
+        data = user_db[user_id]
+        wallet_text = (
+            f"Your wallet balance is: ₹{data['balance']}\n"
+            "Complete more tasks to earn!"
+        )
+        bot.send_message(user_id, wallet_text)
 
-# --- CALLBACK ROUTER SYSTEM ---
+    elif text == '👥 Invite & Earn':
+        bot_info = bot.get_me()
+        invite_link = f"https://t.me/{bot_info.username}?start={user_id}"
+        refs = user_db[user_id]["referrals"]
+        
+        invite_card = (
+            f"Share this link with your friends to earn ₹1 per referral!\n\n"
+            f"Your Invite Link:\n{invite_link}\n\n"
+            f"Total Referrals: {refs}\n\n"
+            f"(Note: You will receive the ₹1 bonus after the invited user successfully completes their first task.)"
+        )
+        bot.send_message(user_id, invite_card, disable_web_page_preview=True)
+
+    elif text == '💸 Withdraw':
+        data = user_db[user_id]
+        withdraw_text = (
+            f"Available Balance: ₹{data['balance']}\n"
+            f"(Total: ₹{data['balance']}, Pending: ₹{data['pending']})\n\n"
+            f"How much would you like to withdraw? (Minimum ₹{MIN_WITHDRAWAL})"
+        )
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.add(types.KeyboardButton('❌ Cancel'))
+        msg = bot.send_message(user_id, withdraw_text, reply_markup=markup)
+        bot.register_next_step_handler(msg, process_withdrawal_amount)
+
+    elif text == 'ℹ️ Help & Tutorial':
+        help_text = (
+            "ℹ️ **Help & Video Tutorial Center**\n\n"
+            "Need guidance on handling standard workloads?\n"
+            "Contact Support Line: @ROBINGMAILWORK for targeted manual instructions."
+        )
+        bot.send_message(user_id, help_text, parse_mode="Markdown")
+
+    elif text == '🏆 Leaderboard':
+        leaderboard_msg = (
+            "🏆 **LEADERBOARD STATUS**\n\n"
+            "👥 **Top Review Workers:**\n"
+            "1. 👹DEEP 我👹 - 22 Reviews\n"
+            "2. GODX - 10 Reviews\n"
+            "3. Rushil - 10 Reviews\n"
+            "4. ~ - 6 Reviews\n"
+            "5. SANKAR - 6 Reviews\n"
+            "6. Suhani - 6 Reviews\n"
+            "7. Mahesh kumar - 5 Reviews\n"
+            "8. Gaurav - 4 Reviews\n"
+            "9. Ws fil crater - 4 Reviews\n"
+            "10. SYEDSELLER ᵀᴹ - 4 Reviews\n\n"
+            "📧 **Top Gmail Workers:**\n"
+        )
+        
+        sorted_gmail = sorted(user_db.items(), key=lambda item: item[1]['gmail_count'], reverse=True)
+        
+        sample_gmailers = [
+            ("AKASH RAWAT", 11), ("THE KIDD ‼️", 7), ("~", 6), 
+            ("Satura Gojo", 6), ("N E X U S", 5), ("Rahul", 4), 
+            ("YASH", 4), ("Yajur", 4), ("Krishna 🤝", 3), ("DOGGI", 3)
+        ]
+        
+        idx = 1
+        for uid, udata in sorted_gmail[:5]:
+            if udata['gmail_count'] > 0:
+                name = udata['first_name']
+                leaderboard_msg += f"{idx}. 🧑‍💻 {name} - {udata['gmail_count']} Gmails\n"
+                idx += 1
+                
+        for sname, scount in sample_gmailers:
+            if idx <= 10:
+                leaderboard_msg += f"{idx}. 🧑‍💻 {sname} - {scount} Gmails\n"
+                idx += 1
+                
+        user_stats = user_db[user_id]
+        leaderboard_msg += (
+            f"\n📊 **Your Stats:**\n"
+            f"Reviews: 0\n"
+            f"Gmails: {user_stats['gmail_count']}"
+        )
+        bot.send_message(user_id, leaderboard_msg)
+
+# --- 7. WORKFLOW INTERACTION HANDLING ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     user_id = call.message.chat.id
-    data_parts = call.data.split("_")
-    action = data_parts[0]
-
-    if action == "verify_channel_joins":
-        # ⚡ CRITICAL FIX: Answer the callback immediately to stop "not responding" message
-        try:
-            bot.answer_callback_query(call.id)
-        except Exception:
-            pass
-
-        if is_user_subscribed(user_id):
-            try:
-                bot.delete_message(chat_id=user_id, message_id=call.message.message_id)
-            except Exception:
-                pass
-            welcome_text = "Welcome to ROBINxMAIL TASK Bot! Select an option below to begin."
-            bot.send_message(user_id, welcome_text, reply_markup=get_main_keyboard())
-        else:
-            # Alert user on-screen that they still need to join
-            try:
-                bot.answer_callback_query(call.id, "❌ You haven't joined all required public channels yet!", show_alert=True)
-            except Exception:
-                bot.send_message(user_id, "❌ You haven't joined the required channel yet! Please join and click verification again.")
-        return
-
-    # Immediately acknowledge other inline button events to prevent spinners
     try:
         bot.answer_callback_query(call.id)
     except Exception:
         pass
 
-    if action == "verifymail":
-        target = int(data_parts[1])
-        payout = int(data_parts[2])
-        if target in user_data:
-            user_data[target]["balance"] += payout
-        bot.edit_message_caption(f"✅ **Approved!** ₹{payout} added to User ID: `{target}` balance.", chat_id=ADMIN_ID, message_id=call.message.message_id)
-        bot.send_message(target, f"🎉 **Task Approved!** ₹{payout} has been credited to your balance.")
+    if call.data == "verify_channel_joins":
+        if is_user_subscribed(user_id):
+            try:
+                bot.delete_message(user_id, call.message.message_id)
+            except Exception:
+                pass
+            bot.send_message(user_id, "✅ Thanks for joining! Now you can use this bot.", reply_markup=get_main_keyboard())
+        else:
+            bot.send_message(user_id, "❌ You haven't joined the required channel yet! Please join and click verification again.")
 
-    elif action == "rejectmail":
-        target = int(data_parts[1])
-        bot.edit_message_caption("❌ **Proof Rejected.**", chat_id=ADMIN_ID, message_id=call.message.message_id)
-        bot.send_message(target, "❌ Your screenshot proof was rejected by the admin.")
+    elif call.data in ["task_select_single", "task_select_bulk"]:
+        # 🚨 CHECK 1: If master switch is turned off, show "No Task Available" right away
+        if not GMAIL_TASKS_ACTIVE:
+            no_task_text = (
+                "📥 **Gmail Work Assignment**\n\n"
+                "ℹ️ For now There is no Task Available.\n"
+                "📢 When the admin adds we will notify.\n\n"
+                "• Stay Tuned"
+            )
+            bot.send_message(user_id, no_task_text, parse_mode="Markdown")
+            return
 
-    elif action == "payok":
-        target = int(data_parts[1])
-        amt = int(data_parts[2])
-        if target in user_data and user_data[target]["balance"] >= amt:
-            user_data[target]["balance"] -= amt
-        bot.edit_message_text(f"✅ **Succeeded!** Deducted ₹{amt} from user wallet.", chat_id=ADMIN_ID, message_id=call.message.message_id)
-        bot.send_message(target, f"🎉 Your withdrawal request for **₹{amt}** was approved and sent via UPI!")
+        # Find the next available account from pool
+        assigned_task = None
+        for task in GMAIL_TASK_POOL:
+            if not task["completed"] and task["assigned_to"] is None:
+                assigned_task = task
+                break
 
-    elif action == "payfail":
-        target = int(data_parts[1])
-        bot.edit_message_text("❌ **Withdrawal Request Cancelled/Rejected.**", chat_id=ADMIN_ID, message_id=call.message.message_id)
-        bot.send_message(target, "❌ Your withdrawal request was rejected by the admin.")
+        # 🚨 CHECK 2: If pool is empty out of accounts, show the same alert
+        if not assigned_task:
+            no_task_text = (
+                "📥 **Gmail Work Assignment**\n\n"
+                "ℹ️ For now There is no Task Available.\n"
+                "📢 When the admin adds we will notify.\n\n"
+                "• Stay Tuned"
+            )
+            bot.send_message(user_id, no_task_text, parse_mode="Markdown")
+            return
 
-# --- HANDLES ATTACHED SCREENSHOT PROOF ---
+        assigned_task["assigned_to"] = user_id
+        task_type = "Single" if "single" in call.data else "Bulk"
+        reward = SINGLE_TASK_REWARD if task_type == "Single" else BULK_TASK_REWARD
+        
+        user_db[user_id]["active_task"] = {
+            "task_id": assigned_task["id"],
+            "type": task_type,
+            "reward": reward,
+            "email": assigned_task["email"],
+            "pass": assigned_task["pass"]
+        }
+        
+        job_card = (
+            f"✉️ **JOB FILE: {SPECIFIC_TASK_TITLE} ({task_type})**\n\n"
+            f"💰 **Reward:** ₹{reward}\n"
+            f"🔗 **Link:** {SPECIFIC_TASK_LINK}\n\n"
+            f"ℹ️ **Target Creation Setup:**\n"
+            f"Details - {assigned_task['email']}\n"
+            f"Pass- {assigned_task['pass']}\n\n"
+            f"📋 **Instructions:**\n{SPECIFIC_TASK_INSTRUCTIONS}\n\n"
+            "⚠️ Send your screenshot completion proof directly to this chat window now."
+        )
+        bot.send_message(user_id, job_card, parse_mode="Markdown", disable_web_page_preview=True)
+
+    elif call.data.startswith("approve_"):
+        _, target_id, payout_str, pool_task_id = call.data.split("_")
+        target_id = int(target_id)
+        payout = float(payout_str)
+        
+        if target_id in user_db:
+            user_db[target_id]["balance"] += payout
+            if user_db[target_id]["pending"] >= payout:
+                user_db[target_id]["pending"] -= payout
+            user_db[target_id]["gmail_count"] += 1
+            user_db[target_id]["waiting_approval"] = False 
+            
+            for t in GMAIL_TASK_POOL:
+                if t["id"] == pool_task_id:
+                    t["completed"] = True
+                    break
+            
+            ref_id = user_db[target_id]["referrer_id"]
+            if ref_id and ref_id in user_db and user_db[target_id]["gmail_count"] == 1:
+                user_db[ref_id]["balance"] += 1.0
+                user_db[ref_id]["referrals"] += 1
+                try:
+                    bot.send_message(ref_id, f"🎉 You received ₹1 referral reward because a user you invited completed their first task!")
+                except Exception:
+                    pass
+
+            bot.edit_message_caption(f"✅ **Approved!** ₹{payout} added to User Wallet ID: `{target_id}`", chat_id=ADMIN_ID, message_id=call.message.message_id)
+            try:
+                bot.send_message(target_id, f"🎉 **Task Approved!** ₹{payout} has been credited to your balance.\n\n📥 You can now click **'📥 Get Gmail Task'** to claim your next assignment!")
+            except Exception:
+                pass
+
+    elif call.data.startswith("reject_"):
+        _, target_id, pool_task_id = call.data.split("_")
+        target_id = int(target_id)
+        
+        if target_id in user_db:
+            user_db[target_id]["waiting_approval"] = False 
+            
+            for t in GMAIL_TASK_POOL:
+                if t["id"] == pool_task_id:
+                    t["assigned_to"] = None
+                    break
+                    
+            bot.edit_message_caption("❌ **Proof Rejected.**", chat_id=ADMIN_ID, message_id=call.message.message_id)
+            try:
+                bot.send_message(target_id, "❌ Your screenshot proof was rejected by the admin. The task has been put back into the pool.")
+            except Exception:
+                pass
+
+# --- 8. PROOF PROCESSING LOGIC ---
 @bot.message_handler(content_types=['photo'])
 def audit_incoming_proof(message):
     user_id = message.chat.id
-    
     if not is_user_subscribed(user_id):
         send_force_join_menu(user_id)
         return
 
-    if user_id not in user_data or not user_data[user_id]["active_task_status"]:
-        bot.send_message(user_id, "❌ Click '✉️ Tasks' to view your job before sending proof.")
+    if user_id not in user_db or not user_db[user_id]["active_task"]:
+        bot.send_message(user_id, "❌ Click '📥 Get Gmail Task' to view your job before sending proof.")
         return
+
+    task_info = user_db[user_id]["active_task"]
+    reward = task_info["reward"]
+    task_type = task_info["type"]
+    pool_task_id = task_info["task_id"]
     
-    username = f"@{message.from_user.username}" if message.from_user.username else "No Username"
-    first_name = message.from_user.first_name
+    user_db[user_id]["pending"] += reward
+    user_db[user_id]["waiting_approval"] = True  
+    user_db[user_id]["active_task"] = None       
     
-    user_data[user_id]["active_task_status"] = False  
-    bot.reply_to(message, "⏳ **Proof received!** Sent to Admin validation queue.")
+    bot.reply_to(message, "⏳ **Proof received!** Sent to Admin validation queue.", reply_markup=get_main_keyboard())
 
     photo_token = message.photo[-1].file_id
     admin_markup = types.InlineKeyboardMarkup()
-    admin_markup.add(types.InlineKeyboardButton("✅ Approve & Pay", callback_data=f"verifymail_{user_id}_{SPECIFIC_TASK_REWARD}"),
-                     types.InlineKeyboardButton("❌ Reject Work", callback_data=f"rejectmail_{user_id}_{SPECIFIC_TASK_REWARD}"))
+    admin_markup.add(
+        types.InlineKeyboardButton("✅ Approve & Pay", callback_data=f"approve_{user_id}_{reward}_{pool_task_id}"),
+        types.InlineKeyboardButton("❌ Reject Work", callback_data=f"reject_{user_id}_{pool_task_id}")
+    )
 
     admin_view_card = (
-        "🧐 **NEW SCREENSHOT PROOF SUBMITTED**\n"
+        "🧐 **NEW TASK PROOF SUBMITTED**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 **Name:** {first_name}\n"
-        f"🌐 **Username:** {username}\n"
+        f"👤 **Name:** {user_db[user_id]['first_name']}\n"
+        f"🌐 **Username:** {user_db[user_id]['username']}\n"
         f"🆔 **User ID:** `{user_id}`\n"
-        f"🔗 **Profile Link:** [Click Here to Chat](tg://user?id={user_id})\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏷 **Task:** {SPECIFIC_TASK_TITLE}\n"
-        f"💰 **Reward Amount:** ₹{SPECIFIC_TASK_REWARD}\n\n"
-        "👇 Press a button below to evaluate."
+        f"🏷 **Task Type:** {task_type} Gmail\n"
+        f"📧 **Assigned Email:** `{task_info['email']}`\n"
+        f"💰 **Reward Amount:** ₹{reward}\n"
     )
     bot.send_photo(ADMIN_ID, photo_token, caption=admin_view_card, parse_mode="Markdown", reply_markup=admin_markup)
 
-# --- PROCESS UPI WITHDRAWAL EXTRADITION ---
-def process_payout_request(message):
+# --- 9. WITHDRAWAL PIPELINE LOGIC ---
+def process_withdrawal_amount(message):
+    user_id = message.chat.id
+    if message.text == '❌ Cancel':
+        bot.send_message(user_id, "Action cancelled.", reply_markup=get_main_keyboard())
+        return
+
+    try:
+        amount = float(message.text)
+        if amount < MIN_WITHDRAWAL:
+            bot.send_message(user_id, f"❌ Minimum withdrawal is ₹{MIN_WITHDRAWAL}.", reply_markup=get_main_keyboard())
+            return
+        if amount > user_db[user_id]["balance"]:
+            bot.send_message(user_id, "❌ Insufficient balance in your wallet account.", reply_markup=get_main_keyboard())
+            return
+            
+        msg = bot.send_message(user_id, "Enter your UPI ID for payout:")
+        bot.register_next_step_handler(msg, lambda m: process_withdrawal_upi(m, amount))
+    except ValueError:
+        bot.send_message(user_id, "❌ Invalid value input. Cancelled.", reply_markup=get_main_keyboard())
+
+def process_withdrawal_upi(message, amount):
     user_id = message.chat.id
     upi_string = message.text
-    wallet_bal = user_data[user_id]["balance"]
-    username = user_data[user_id].get("username", "No Username")
     
-    if not is_user_subscribed(user_id):
-        send_force_join_menu(user_id)
+    if upi_string == '❌ Cancel':
+        bot.send_message(user_id, "Action cancelled.", reply_markup=get_main_keyboard())
         return
-
+        
     if "@" not in upi_string:
-        bot.send_message(user_id, "❌ Canceled. Invalid UPI ID.")
+        bot.send_message(user_id, "❌ Invalid UPI Address layout formatting.", reply_markup=get_main_keyboard())
         return
 
-    bot.send_message(user_id, "⏳ Payout sheet sent to admin approval. Please wait.")
-
-    admin_payout_panel = types.InlineKeyboardMarkup()
-    admin_payout_panel.add(types.InlineKeyboardButton("✅ Confirm Sent", callback_data=f"payok_{user_id}_{wallet_bal}"),
-                           types.InlineKeyboardButton("❌ Reject/Cancel", callback_data=f"payfail_{user_id}_{wallet_bal}"))
+    user_db[user_id]["balance"] -= amount
+    bot.send_message(user_id, "⏳ Payout sheet sent to admin approval. Please wait.", reply_markup=get_main_keyboard())
 
     alert_string = (
         "🚨 **WITHDRAWAL REQUISITION** 🚨\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 **Username:** {username}\n"
+        f"👤 **Username:** {user_db[user_id]['username']}\n"
         f"🆔 **User UID:** `{user_id}`\n"
-        f"💳 **Amount:** ₹{wallet_bal}\n"
+        f"💳 **Amount:** ₹{amount}\n"
         f"📌 **UPI ID:** `{upi_string}`"
     )
-    bot.send_message(ADMIN_ID, alert_string, parse_mode="Markdown", reply_markup=admin_payout_panel)
+    bot.send_message(ADMIN_ID, alert_string, parse_mode="Markdown")
 
-# --- DUAL EXECUTION ENGINE SYSTEM ---
+# --- 10. SYSTEM EXECUTION ---
 if __name__ == "__main__":
     web_engine = threading.Thread(target=run_web_server)
     web_engine.daemon = True
     web_engine.start()
     
-    print("ROBINxMAIL TASK Hardcoded Core is running...")
+    print("Task Engine Core Online...")
     bot.infinity_polling()
