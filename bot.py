@@ -35,10 +35,7 @@ SPECIFIC_TASK_INSTRUCTIONS = (
     "showing the created email ID and submit it directly here."
 )
 
-# --- 4. DYNAMIC FORCE JOIN CHANNELS CONFIGURATION ---
-# Default channels list (Admin can change these anytime using /setchannels)
-REQUIRED_CHANNELS = ["@zoroXmadara", "@BackUpZoro", "@ReviewWorkUpdates"]
-
+REQUIRED_CHANNELS = ["@ROBINGMAILWORK", ""]
 # In-memory database for tracking balances
 user_data = {}
 MIN_WITHDRAWAL = 30  
